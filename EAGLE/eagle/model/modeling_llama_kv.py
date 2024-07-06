@@ -530,6 +530,9 @@ class LlamaAttention(nn.Module):
             past_key_value: Optional[Tuple[torch.Tensor]] = None,
             output_attentions: bool = False,
             use_cache: bool = False,
+            
+            # [xjm: ] add is_skipped
+            is_skipped = False
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
@@ -596,7 +599,8 @@ class LlamaAttention(nn.Module):
         # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
-
+        if is_skipped:
+            return None, None, None
         attn_weights = torch.matmul(
             query_states, key_states.transpose(2, 3)
         ) / math.sqrt(self.head_dim)
@@ -684,6 +688,9 @@ class LlamaDecoderLayer(nn.Module):
             past_key_value: Optional[Tuple[torch.Tensor]] = None,
             output_attentions: Optional[bool] = False,
             use_cache: Optional[bool] = False,
+            
+            # [xjm:] add is_skipped
+            is_skipped = False,
     ) -> Tuple[
         torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]
     ]:
@@ -721,30 +728,36 @@ class LlamaDecoderLayer(nn.Module):
             past_key_value=past_key_value,
             output_attentions=output_attentions,
             use_cache=use_cache,
+            
+            # [xjm:] add is_skipped
+            is_skipped = is_skipped
         )
-        hidden_states = residual + hidden_states
+        if not is_skipped:
+            hidden_states = residual + hidden_states
 
-        if hidden_states.dtype == torch.float16:
-            clamp_value = torch.where(
-                torch.isinf(hidden_states).any(),
-                torch.finfo(hidden_states.dtype).max - 1000,
-                torch.finfo(hidden_states.dtype).max,
-            )
-            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
-        # Fully Connected
-        residual = hidden_states
-        hidden_states = self.post_attention_layernorm(hidden_states)
-        hidden_states = self.mlp(hidden_states)
-        hidden_states = residual + hidden_states
+            if hidden_states.dtype == torch.float16:
+                clamp_value = torch.where(
+                    torch.isinf(hidden_states).any(),
+                    torch.finfo(hidden_states.dtype).max - 1000,
+                    torch.finfo(hidden_states.dtype).max,
+                )
+                hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
+            # Fully Connected
+            residual = hidden_states
+            hidden_states = self.post_attention_layernorm(hidden_states)
+            hidden_states = self.mlp(hidden_states)
+            hidden_states = residual + hidden_states
 
-        if hidden_states.dtype == torch.float16:
-            clamp_value = torch.where(
-                torch.isinf(hidden_states).any(),
-                torch.finfo(hidden_states.dtype).max - 1000,
-                torch.finfo(hidden_states.dtype).max,
-            )
-            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
-        outputs = (hidden_states,)
+            if hidden_states.dtype == torch.float16:
+                clamp_value = torch.where(
+                    torch.isinf(hidden_states).any(),
+                    torch.finfo(hidden_states.dtype).max - 1000,
+                    torch.finfo(hidden_states.dtype).max,
+                )
+                hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
+            outputs = (hidden_states,)
+        else:
+            outputs = (residual,)
 
         if output_attentions:
             outputs += (self_attn_weights,)
@@ -889,6 +902,9 @@ class LlamaModel(LlamaPreTrainedModel):
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
+        
+        # [xjm:] add new stream
+        self.stream = torch.cuda.Stream()
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -947,6 +963,11 @@ class LlamaModel(LlamaPreTrainedModel):
             output_attentions: Optional[bool] = None,
             output_hidden_states: Optional[bool] = None,
             return_dict: Optional[bool] = None,
+            
+            # [xjm:] add skip layer param
+            skip_layer = None,
+            # [xjm:] add exit_layer param
+            exit_layer = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = (
             output_attentions
@@ -1027,9 +1048,16 @@ class LlamaModel(LlamaPreTrainedModel):
         all_self_attns = () if output_attentions else None
         next_decoder_cache = () if use_cache else None
 
+        # [xjm:] add stop idx 
+        stop_idx = 0
         for idx, decoder_layer in enumerate(self.layers):
-            # if idx==16:
-            #     print(idx)
+            # [xjm:] add skip layer
+            # if idx == skip_layer:
+            #     continue
+            if skip_layer is not None and idx in skip_layer:
+                continue
+            # if exit_layer is not None and idx > exit_layer and idx < 32:
+            #     continue
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -1061,6 +1089,9 @@ class LlamaModel(LlamaPreTrainedModel):
                     past_key_value=past_key_value,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
+                    
+                    # [xjm:] add skip layer 
+                    # is_skipped = True if skip_layer is not None and idx in skip_layer else False
                 )
 
             hidden_states = layer_outputs[0]
@@ -1070,7 +1101,12 @@ class LlamaModel(LlamaPreTrainedModel):
 
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
-
+            # [xjm:] add absolute exit layer
+            if idx==exit_layer:
+                stop_idx = idx
+                break
+        
+        
         hidden_states = self.norm(hidden_states)
 
         # add hidden states from the last decoder layer

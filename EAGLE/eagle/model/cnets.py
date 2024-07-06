@@ -760,11 +760,16 @@ class Model(nn.Module):
 
     @torch.no_grad()
     def topK_genrate(self, hidden_states, input_ids, head, logits_processor,max_length=4, use_cache=True):
+        # [xjm:] add CPU device for draft model
         # test_=input_ids
         # input_ids = torch.tensor([state[1:]])
+        ori_device = hidden_states.device
+        ori_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(head.weight.device).to(head.weight.dtype)
         input_ids = input_ids[:, 1:]
         input_ids = input_ids.to(hidden_states.device)
         ss_token,ss_prob,ss_op = [],[],[]
+        ss_exp_prob = []
         len_posi=input_ids.shape[1]
         self.reset()
         if use_cache:
@@ -779,26 +784,51 @@ class Model(nn.Module):
             last_hidden = out_hidden[:, -1]
             if not self.diff_device:
                 last_headout = head(last_hidden)
+                # [xjm:] add softmax for experiments
+                exp_logits = torch.nn.functional.softmax(last_headout,dim=1)
             else:
                 if hasattr(self, "layer_device"):
                     last_headout = head(last_hidden)
+                    # [xjm:] add softmax for experiments
+                    exp_logits = torch.nn.functional.softmax(last_headout,dim=1)
                     last_headout=last_headout.to(self.layer_device)
+                    exp_logits = exp_logits.to(self.layer_device)
                 else:
                     last_headout=F.linear(last_hidden,self.headweight)
+                    exp_logits = torch.nn.functional.softmax(last_headout,dim=1)
 
 
 
             for i in range(len(self.tree_buffer['tree_indices'])):
                 if logits_processor is not None:
                     topk_index,topk_prob,op=self.sample(last_headout,logits_processor,k=top_k,)
+                    # exp_topk_index,exp_topk_prob,exp_op=self.sample(exp_logits,logits_processor,k=top_k,)
                 else:
                     top=torch.topk(last_headout, top_k, dim=-1)
+                    # exp_top = torch.topk(exp_logits, top_k, dim=-1)
                     topk_index,topk_prob = top.indices,top.values
+                    # exp_topk_index,exp_topk_prob = exp_top.indices,exp_top.values
                     op=None
-
+                
+                # if(False in (exp_topk_index == topk_index)):
+                #     print(exp_topk_index)
+                #     print(topk_index)
+                #     assert not (False in (exp_topk_index == topk_index)), "topk index not equal"
+                tmp = []
+                for idx in topk_index:
+                    tmp.append(exp_logits[0,idx].unsqueeze(0))
+                exp_topk_prob = torch.cat(tmp,dim=0)
+                    
+                    
+                    
+                    
+                # exp_topk_prob = exp_logits[0,topk_index[0]].unsqueeze(0)
+                
+                
                 ss_token.append(topk_index)
                 ss_prob.append(topk_prob)
                 ss_op.append(op)
+                ss_exp_prob.append(exp_topk_prob)
                 #topk_index = torch.topk(last_headout, top_k, dim=-1).indices
                 topk_index = topk_index.view(-1)
                 select_index=topk_index[self.tree_buffer['tree_indices'][i]]
@@ -818,31 +848,52 @@ class Model(nn.Module):
 
                 if not self.diff_device:
                     last_headout = head(out_hidden[0])
+                    # [xjm:] add softmax for experiments
+                    exp_logits = torch.nn.functional.softmax(last_headout,dim=1)
                 else:
                     if hasattr(self, "layer_device"):
                         last_headout = head(out_hidden[0])
+                        # [xjm:] add softmax for experiments
+                        exp_logits = torch.nn.functional.softmax(last_headout,dim=1)
                         last_headout = last_headout.to(self.layer_device)
+                        exp_logits = exp_logits.to(self.layer_device)
                     else:
                         last_headout = F.linear(out_hidden[0], self.headweight)
+                        # [xjm:] add softmax for experiments
+                        exp_logits = torch.nn.functional.softmax(last_headout,dim=1)
                 #last_headout = head(out_hidden[0])
                 #sslogits.append(last_headout)
                 #print(select_index)
 
             if logits_processor is not None:
                 topk_index,topk_prob,op=self.sample(last_headout,logits_processor,k=top_k,)
+                # exp_topk_index,exp_topk_prob,exp_op=self.sample(exp_logits,logits_processor,k=top_k,)
             else:
                 top = torch.topk(last_headout, top_k, dim=-1)
+                # exp_top = torch.topk(exp_logits, top_k, dim=-1)
                 topk_index, topk_prob = top.indices, top.values
+                # exp_topk_index,exp_topk_prob = exp_top.indices,exp_top.values
                 op=None
+            # if(False in (exp_topk_index == topk_index)):
+            #     print(exp_topk_index)
+            #     print(topk_index)
+            #     assert not (False in (exp_topk_index == topk_index)), "topk index not equal"
+            tmp = []
+            for idx in topk_index:
+                tmp.append(exp_logits[0,idx].unsqueeze(0))
+            exp_topk_prob = torch.cat(tmp,dim=0)
+            # exp_topk_prob = exp_logits[0,topk_index[0]].unsqueeze(0)
             ss_token.append(topk_index)
             ss_prob.append(topk_prob)
             ss_op.append(op)
+            ss_exp_prob.append(exp_topk_prob)
 
         else:
             # TODO
             pass
 
-        return (torch.cat(ss_token),torch.cat(ss_prob),ss_op)
+        # return (torch.cat(ss_token),torch.cat(ss_prob),ss_op)
+        return (torch.cat(ss_token).to(ori_device),torch.cat(ss_prob).to(ori_device).to(ori_dtype),ss_op,torch.cat(ss_exp_prob).to(ori_device).to(ori_dtype))
 
 
 

@@ -228,11 +228,11 @@ def generate_tree_buffers(tree_choices, device="cuda"):
 
 
 def initialize_tree(input_ids, model, tree_attn_mask, past_key_values, logits_processor):
-    tree_logits, outputs, logits, hidden_state, sample_token = model(
+    tree_logits, outputs, logits, hidden_state, sample_token,Tv,Td = model(
         input_ids, past_key_values=past_key_values, output_orig=True, logits_processor=logits_processor
     )
     model.base_model.model.tree_mask = tree_attn_mask
-    return tree_logits, logits, hidden_state, sample_token
+    return tree_logits, logits, hidden_state, sample_token,Tv,Td
 
 
 def reset_tree_mode(
@@ -290,9 +290,19 @@ def generate_candidates(tree_logits, tree_indices, retrieve_indices, sample_toke
         cart_candidates_prob = tree_candidates_prob_ext[retrieve_indices]
     else:
         cart_candidates_prob = None
+    cart_candidates_prob_soft = None
+    
+    # [xjm:] add softmax result
+    candidates_tree_prob_soft = tree_logits[3]
+    candidates_prob_soft = torch.cat([torch.ones(1, device=candidates_tree_prob_soft.device, dtype=torch.float32), candidates_tree_prob_soft.view(-1)],dim=-1)
+    
+    tree_candidates_prob_soft = candidates_prob_soft[tree_indices]
+    tree_candidates_prob_ext_soft = torch.cat([tree_candidates_prob_soft, torch.ones((1), dtype=torch.float32, device=tree_candidates_prob_soft.device)], dim=0)
+    cart_candidates_prob_soft = tree_candidates_prob_ext_soft[retrieve_indices]
+    
     # Unsqueeze the tree candidates for dimension consistency.
     tree_candidates = tree_candidates.unsqueeze(0)
-    return cart_candidates, cart_candidates_prob, tree_candidates
+    return cart_candidates, cart_candidates_prob, tree_candidates,(cart_candidates_prob_soft,tree_candidates_prob_ext_soft)
 
 
 def tree_decoding(
@@ -302,19 +312,30 @@ def tree_decoding(
         tree_position_ids,
         input_ids,
         retrieve_indices,
+        
+        # [xjm:] add skip layer param
+        skip_layer = None,
+        # [xjm:] add early exiting param
+        exit_layer = None
 ):
     position_ids = tree_position_ids + input_ids.shape[1]
 
-    outputs, tree_logits, hidden_state = model(
+    outputs, tree_logits, hidden_state,Tv = model(
         tree_candidates,
         output_orig=True,
         past_key_values=past_key_values,
         position_ids=position_ids,
         init=False,
+        output_hidden_states = True,
+        
+        # [xjm:] add skip layer param
+        skip_layer = skip_layer,
+        # [xjm:] add early exiting param
+        exit_layer = exit_layer
     )
 
     logits = tree_logits[0, retrieve_indices]
-    return logits, hidden_state, outputs
+    return logits, hidden_state, outputs, Tv
 
 
 def evaluate_posterior(
@@ -325,7 +346,8 @@ def evaluate_posterior(
         op,
         p_indices,
         tree_candidates,
-        b_indices
+        b_indices,
+        early_exiting = False,
 ) -> Tuple[torch.Tensor, int]:
     """
     Evaluate the posterior probabilities of the candidates based on the provided logits and choose the best candidate.
@@ -345,6 +367,7 @@ def evaluate_posterior(
     - accept_length (int): Length of the accepted candidate sequence.
     """
     # Greedy decoding based on temperature value
+    # [xjm:] candidates (15,6), logits (15,6,32000)
     if logits_processor is None:
         # Find the tokens that match the maximum logits for each position in the sequence
         posterior_mask = (
@@ -358,7 +381,10 @@ def evaluate_posterior(
             best_candidate = torch.tensor(0, dtype=torch.long, device=candidates.device)
         else:
             best_candidate = torch.argmax(candidates_accept_length).to(torch.long)
-        return best_candidate, accept_length, logits[best_candidate, accept_length]
+        if not early_exiting:
+            return best_candidate, accept_length, logits[best_candidate, accept_length]
+        else:
+            return best_candidate, accept_length, logits[best_candidate, accept_length],posterior_mask
 
     else:
         cart_candidates_prob = cart_candidates_prob.to(logits.device)
@@ -463,13 +489,16 @@ def update_inference_inputs(
         token = torch.argmax(prob)
         token = token[None, None]
     # hidden_state = torch.cat((hidden_state, accept_hidden_state_new), dim=1)
+    import time
+    st = time.time()
     tree_logits = model.ea_layer.topK_genrate(accept_hidden_state_new,
                                               input_ids=torch.cat((input_ids, token.to(input_ids.device)), dim=1),
-                                              head=model.base_model.lm_head, logits_processor=logits_processor)
+                                              head=model.ea_layer_lm_head, logits_processor=logits_processor)
+    Td = time.time() - st
 
     new_token += accept_length + 1
 
-    return input_ids, tree_logits, new_token, None, token
+    return input_ids, tree_logits, new_token, None, token,Td
 
 
 if __name__ == "__main__":
