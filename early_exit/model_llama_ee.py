@@ -972,11 +972,11 @@ class LlamaModel(LlamaPreTrainedModel):
 
         self.gradient_checkpointing = False
         
-        # [xjm:] add predictor
-        import lightgbm as lgb
-        self.predictor = lgb.Booster(model_file='/home/xujiaming/xujiaming/research/ASPLOS-24/results/model.txt')
         
-        self.predictors = [torch.load('/home/xujiaming/xujiaming/research/ASPLOS-24/results/model'+str(layer_idx)+'.pth').to(torch.float16) for layer_idx in range(config.num_hidden_layers)]
+        # import lightgbm as lgb
+        # self.predictor = lgb.Booster(model_file='/home/xujiaming/xujiaming/research/ASPLOS-24/results/model.txt')
+        # [xjm:] add MLP predictor
+        self.predictors = [torch.load('./results/model'+str(layer_idx)+'.pth').to(torch.float16) for layer_idx in range(config.num_hidden_layers)]
     
         # Initialize weights and apply final processing
         self.post_init()

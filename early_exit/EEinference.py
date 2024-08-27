@@ -17,7 +17,7 @@ def load_questions(question_file: str, begin: Optional[int], end: Optional[int])
                 questions.append(json.loads(line))
     questions = questions[begin:end]
     return questions
-question_list = load_questions('/home/xujiaming/xujiaming/research/ASPLOS-24/EAGLE/eagle/data/mt_bench/question.jsonl',begin=0,end=80)
+question_list = load_questions('./EAGLE/eagle/data/mt_bench/question.jsonl',begin=0,end=80)
 
 model = EEModel.from_pretrained(
     base_model_path='/share/datasets/public_models/Llama-2-7b-chat-hf',
@@ -70,7 +70,7 @@ for i in trange(len(question_list)):
     output_ids=model(input_ids,max_new_tokens=256,exit_layer_id_list=exit_layer_id_list)
     output_ids_tot += len(output_ids[0]) - seqlen
     output=model.tokenizer.decode(output_ids[0])
-    # print(output)
+    print(output)
 ed = time.time()
 print('MT-bench Time:', (ed -st))
 print('average time ',(ed-st)/output_ids_tot)
@@ -78,7 +78,7 @@ print(sum(exit_layer_id_list)/len(exit_layer_id_list))
 # print(exit_layer_id_list)
 import numpy as np
 exit_layer_id_list = np.array(exit_layer_id_list)
-np.save('../results/exit_layer_id_list.npy',exit_layer_id_list,)
+np.save('./results/exit_layer_id_list.npy',exit_layer_id_list,)
 # 24.36
 
 
