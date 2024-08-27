@@ -7,7 +7,6 @@ parser.add_argument('--lr', type=float, default=3e-5)
 parser.add_argument('--bs', type=int, default=4)
 parser.add_argument('--gradient-accumulation-steps', type=int, default=1)
 parser.add_argument('--tmpdir', type=str, default='0')
-parser.add_argument('--outdir', type=str, default='0')
 parser.add_argument('--cpdir', type=str, default='0')
 args = parser.parse_args()
 
@@ -148,10 +147,6 @@ class CustomDataset(Dataset):
         input_ids = data['input_ids'][:train_config["max_len"]][None, :]
         loss_mask = data["loss_mask"][:train_config["max_len"]][None, :]
 
-        # except:
-        #     with open("error_path.txt", "w") as file:
-        #         file.write(self.data[index])
-        #     print('error path',self.data[index])
 
         length = hidden_state.shape[1]
         # length_q = data['query_ids'].shape[1]
@@ -172,9 +167,7 @@ class CustomDataset(Dataset):
         new_data["target"] = target
         new_data["hidden_state_big"] = hidden_state
         new_data["input_ids"] = input_ids_target
-        # sample = torch.cat((data['xs'],data['xb']))
-        # sample=torch.cat((self.data[index]['x'],self.data[index]['logits']))
-        # label = data['y']
+
 
         if self.transform:
             new_data = self.transform(new_data)
@@ -235,55 +228,66 @@ def top_accuracy(output, target, topk=(1,)):
             res.append(correct_k)
         return res
 
+def compute_loss(target, target_p, predict, loss_mask):
+    out_head = head(predict)
+    out_logp = nn.LogSoftmax(dim=2)(out_head)
+    plogp = target_p * out_logp
+    ploss = -torch.sum(torch.sum(loss_mask * plogp, 2)) / (loss_mask.sum() + 1e-5)
+    vloss = criterion(predict, target)
+    vloss = torch.sum(torch.mean(loss_mask * vloss, 2)) / (loss_mask.sum() + 1e-5)
+    return vloss, ploss, out_head
 
 @torch.no_grad()
 def getkacc(model, data, head, max_length=5):
+    def generate(hidden_states, input_ids, head, max_length=4, use_cache=True):
+        if use_cache:
+            past_key_values = None
+            for i in range(max_length):
+                if past_key_values != None:
+                    out_hidden, past_key_values = model(last_hidden, input_ids=token, past_key_values=past_key_values,
+                                                        use_cache=True)
+                else:
+                    out_hidden, past_key_values = model(hidden_states, input_ids=input_ids, use_cache=True)
+                last_hidden = out_hidden[:, -1:]
+                last_headout = head(last_hidden)
+                token = torch.argmax(last_headout, dim=-1)
+                input_ids = torch.cat((input_ids, token), dim=1)
+
+        else:
+            raise NotImplementedError
+
+        return input_ids
+
     hidden_states = data["hidden_states"]
     input_ids = data["input_ids"]
-    # attention_mask=data["attention_mask"]
     loss_mask = data["loss_mask"]
-    # sample_mask=data["sample_mask"]
     target = data["target"]
     total = [0 for _ in range(max_length)]
     correct = [0 for _ in range(max_length)]
-    bs, sl = hidden_states.shape[0], hidden_states.shape[1]
+    bs, seq_len = hidden_states.shape[0], hidden_states.shape[1]
     target_headout = head(target)
-    hidden_states_headout = head(hidden_states)
+    target_ids = target_headout.argmax(dim=2)
 
-    for i in range(bs):
-        for j in range(sl):
-
-            single_hidden_states = hidden_states[i, :j]
-            single_input_ids = input_ids[i, :j]
-
-            single_hidden_states = single_hidden_states[None, :, :]
-            single_input_ids = single_input_ids[None, :]
+    for pre_len in range(1, seq_len):
+        if loss_mask[:, pre_len].sum() == 0:
+            continue
+        pre_hidden_states = hidden_states[:, :pre_len]
+        pre_input_ids = input_ids[:, :pre_len]
+        outs = generate(pre_hidden_states, pre_input_ids, head, max_length=max_length)
+        generate_ids = outs[:, pre_len:]
+        for bid in range(bs):
             for k in range(max_length):
-                if loss_mask[i, single_hidden_states.shape[1] - 1] == 0:
+                if loss_mask[bid, pre_len + k] == 0:
                     break
-                tmp_in_target_headout = hidden_states_headout[i, single_hidden_states.shape[1] - 1]
-                tmp_out_target_headout = target_headout[i, single_hidden_states.shape[1] - 1]
-                target_in_token = torch.argmax(tmp_in_target_headout)
-                target_out_token = torch.argmax(tmp_out_target_headout)
-                tmp_token = input_ids[i, single_hidden_states.shape[1] - 1]
-                # tmp_sample_mask=sample_mask[i,single_hidden_states.shape[1]-1]
-                if not (target_in_token == tmp_token):
+                if pre_len + k >= seq_len:
                     break
-                out_hidden = model(single_hidden_states, input_ids=single_input_ids)
-                last_hidden = out_hidden[:, -1]
-                last_headout = head(last_hidden)
-                token = torch.argmax(last_headout)
                 total[k] += 1
-                if token == target_out_token:
+                if generate_ids[bid, k] == target_ids[bid, pre_len + k - 1]:
                     correct[k] += 1
                 else:
                     for kk in range(k + 1, max_length):
                         total[kk] += 1
                     break
-
-                single_hidden_states = torch.cat((single_hidden_states, out_hidden[:, -1:]), dim=1)
-                single_input_ids = torch.cat((single_input_ids, torch.tensor([[token]]).to(single_input_ids.device)),
-                                             dim=1)
 
     acc = [correct[i] / total[i] for i in range(len(correct))]
     return acc
@@ -301,9 +305,7 @@ datapath = list_files(train_config["datapath"])
 
 traindatapath = datapath[:int(len(datapath) * 0.95)]
 testdatapath = datapath[int(len(datapath) * 0.95):]
-# print('td',train_config["datapath"])
-# print(datapath)
-# exit()
+
 traindataset = CustomDataset(traindatapath, transform=aug)
 testdataset = CustomDataset(testdatapath)
 train_loader = DataLoader(traindataset, batch_size=train_config["bs"], shuffle=True,
@@ -311,8 +313,6 @@ train_loader = DataLoader(traindataset, batch_size=train_config["bs"], shuffle=T
                           pin_memory=True)
 test_loader = DataLoader(testdataset, batch_size=train_config["bs"], shuffle=False,
                          collate_fn=DataCollatorWithPadding(), num_workers=train_config["num_workers"], pin_memory=True)
-# for batch_data in train_loader:
-#     print(batch_data)
 
 if accelerator.is_main_process:
     if not os.path.exists(args.cpdir):
@@ -357,13 +357,8 @@ for epoch in range(num_epochs + 1):
                 target_head = head(data["target"])
                 target_p = nn.Softmax(dim=2)(target_head)
                 target_p = target_p.detach()
-            out_head = head(predict)
-            out_logp = nn.LogSoftmax(dim=2)(out_head)
             loss_mask = data["loss_mask"][:, :, None]
-            plogp = target_p * out_logp
-            ploss = -torch.sum(torch.sum(loss_mask * plogp, 2)) / (loss_mask.sum()+1e-5)
-            vloss = criterion(predict, data["target"])
-            vloss = torch.sum(torch.mean(loss_mask * vloss, 2)) / (loss_mask.sum()+1e-5)
+            vloss, ploss, out_head = compute_loss(data["target"], target_p, predict, loss_mask)
             loss = train_config["v_w"] * vloss + train_config["p_w"] * ploss
             # loss.backward()
             accelerator.backward(loss)
@@ -371,8 +366,6 @@ for epoch in range(num_epochs + 1):
             optimizer.step()
             if is_warmup:
                 scheduler.step()
-
-        
 
         with torch.no_grad():
             _, predicted = torch.max(out_head, 2)
@@ -432,13 +425,8 @@ for epoch in range(num_epochs + 1):
                 target_head = head(data["target"])
                 target_p = nn.Softmax(dim=2)(target_head)
                 target_p = target_p.detach()
-                out_head = head(predict)
-                out_logp = nn.LogSoftmax(dim=2)(out_head)
                 loss_mask = data["loss_mask"][:, :, None]
-                plogp = target_p * out_logp
-                ploss = -torch.sum(torch.sum(loss_mask * plogp, 2)) / (loss_mask.sum()+1e-5)
-                vloss = criterion(predict, data["target"])
-                vloss = torch.sum(torch.mean(loss_mask * vloss, 2)) / (loss_mask.sum()+1e-5)
+                vloss, ploss, out_head = compute_loss(data["target"], target_p, predict, loss_mask)
                 loss = train_config["v_w"] * vloss + train_config["p_w"] * ploss
                 _, predicted = torch.max(out_head, 2)
                 _, target = torch.max(target_head, 2)
@@ -478,7 +466,4 @@ for epoch in range(num_epochs + 1):
             print('Test Epoch [{}/{}], Loss: {:.4f}'.format(epoch + 1, num_epochs, epoch_loss))
             print('Test Accuracy: {:.2f}%'.format(100 * correct / total))
             wandb.log({"test/epochacc": correct / total, "test/epochloss": epoch_loss})
-            # accelerator.save_model(model, f"checkpoints/model_{epoch}")
-            # accelerator.save_state(output_dir=f"{args.outdir}/state_{epoch}")
-            # os.system(f"cp -r {args.outdir} {args.cpdir}")
             accelerator.save_state(output_dir=f"{args.cpdir}/state_{epoch}")
