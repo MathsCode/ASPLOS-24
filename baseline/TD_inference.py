@@ -1,7 +1,5 @@
 from transformers import AutoTokenizer,AutoModelForCausalLM
 
-
-from eagle.model.ea_model import EaModel
 from fastchat.model import get_conversation_template
 import torch
 import os
@@ -58,7 +56,7 @@ for i in trange(len(question_list)):
     output_ids = model.generate(input_ids, max_length=seqlen+256,temperature = 0, do_sample = False)
     output_ids_tot += len(output_ids[0]) - seqlen
     output=tokenizer.decode(output_ids[0])
-    # print(output)
+    print(output)
 ed = time.time()
 
 print('Time:',ed -st)
