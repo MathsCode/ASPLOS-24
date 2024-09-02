@@ -20,9 +20,7 @@ def load_questions(question_file: str, begin: Optional[int], end: Optional[int])
 
 def draw_curve(Q_id,curve_set):
     import matplotlib.pyplot as plt
-    
     for id, key in enumerate(curve_set):
-        fig, ax = plt.subplots()
         plt.ylim(0, 1.0)
         curve_set[key] = curve_set[key].cpu()
         for idx,token_id in enumerate(key[0:-1]):
@@ -31,10 +29,11 @@ def draw_curve(Q_id,curve_set):
                 color = 'green'
             data = curve_set[key][idx]
             # print(data)
-            ax.plot(data,color=color)
+            plt.plot(data,color=color)
         
         plt.savefig('./results/motivation/Q{}/motivation_{}.png'.format(Q_id,id))
-        plt.close()
+        plt.clf()
+        # plt.cla()
         
 question_list = load_questions('./EAGLE/eagle/data/mt_bench/question.jsonl',begin=0,end=80)
 
@@ -70,7 +69,7 @@ exit_layer_id_list=[]
 
 output_ids_tot = 0
 st = time.time()
-for i in trange(10,len(question_list)):
+for i in trange(11,len(question_list)):
     os.mkdir('./results/motivation/Q{}'.format(i))
     torch.cuda.empty_cache()
     # print("===================== Question Id = ",question_list[i]['question_id']," ======================")
