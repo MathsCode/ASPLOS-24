@@ -245,8 +245,8 @@ def initialize_tree(input_ids, model, past_key_values, logits_processor):
     input_ids = torch.cat((input_ids, token.to(input_ids.device)), dim=1)
     # Clone the output hidden states
 
-    draft_tokens, retrieve_indices,tree_mask,tree_position_ids = model.ea_layer.topK_genrate(hidden_states, input_ids, model.base_model.lm_head,logits_processor)
-    return draft_tokens, retrieve_indices,tree_mask,tree_position_ids, orig, hidden_states, token
+    draft_tokens, retrieve_indices,tree_mask,tree_position_ids, candidates_list= model.ea_layer.topK_genrate(hidden_states, input_ids, model.base_model.lm_head,logits_processor)
+    return draft_tokens, retrieve_indices,tree_mask,tree_position_ids, orig, hidden_states, token,candidates_list
 
 
 def reset_tree_mode(
@@ -305,6 +305,8 @@ def tree_decoding(
         tree_position_ids,
         input_ids,
         retrieve_indices,
+        early_exiting = False,
+        candidates_list = None,
 ):
     position_ids = tree_position_ids + input_ids.shape[1]
 
@@ -313,6 +315,9 @@ def tree_decoding(
         output_orig=True,
         past_key_values=past_key_values,
         position_ids=position_ids,
+        init = False if early_exiting else True,
+        draft_tokens_list = candidates_list,
+        exit_layer_id_list = None,
     )
 
 
@@ -451,14 +456,14 @@ def update_inference_inputs(
         token = torch.argmax(prob)
         token = token[None, None]
     # hidden_state = torch.cat((hidden_state, accept_hidden_state_new), dim=1)
-    draft_tokens, retrieve_indices,tree_mask,tree_position_ids = model.ea_layer.topK_genrate(accept_hidden_state_new,
+    draft_tokens, retrieve_indices,tree_mask,tree_position_ids, candidates_list= model.ea_layer.topK_genrate(accept_hidden_state_new,
                                               input_ids=torch.cat((input_ids, token.to(input_ids.device)), dim=1),
                                               head=model.base_model.lm_head,logits_processor=logits_processor)
 
 
     new_token += accept_length + 1
 
-    return input_ids, draft_tokens, retrieve_indices,tree_mask,tree_position_ids, new_token, None, token
+    return input_ids, draft_tokens, retrieve_indices,tree_mask,tree_position_ids, new_token, None, token,candidates_list
 
 
 if __name__ == "__main__":

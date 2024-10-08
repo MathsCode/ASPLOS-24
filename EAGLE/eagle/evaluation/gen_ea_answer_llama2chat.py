@@ -20,7 +20,22 @@ from ..model.ea_model import EaModel
 from ..model.kv_cache import initialize_past_key_values
 from ..model.utils import *
 
+import torch.nn as nn
 
+class MLP(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size):
+        super(MLP, self).__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(hidden_size, output_size)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        out = self.fc1(x)
+        out = self.relu(out)
+        out = self.fc2(out)
+        out = self.sigmoid(out)
+        return out
 
 def run_eval(
         base_model_path,
@@ -123,7 +138,7 @@ def get_model_answers(
     question = questions[0]
 
     # warmup
-    for _ in range(3):
+    for _ in range(0):
         torch.manual_seed(0)
 
         conv = get_conversation_template("llama-2-chat")
@@ -213,7 +228,10 @@ def get_model_answers(
                 output_ids, new_token, idx = model.eagenerate(
                     torch.as_tensor(input_ids).cuda(),
                     temperature=temperature,
-                    log=True
+                    log=True,
+                    max_length=256,
+                    max_new_tokens=128,
+                    early_exiting = True
                 )
                 torch.cuda.synchronize()
                 total_time = time.time() - start_time
@@ -319,7 +337,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--total-token",
         type=int,
-        default=60,
+        default=24,
         help="The total number of nodes in the draft tree",
     )
     parser.add_argument(
@@ -330,7 +348,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--top-k",
         type=int,
-        default=10,
+        default=4,
     )
     parser.add_argument(
         "--num-choices",

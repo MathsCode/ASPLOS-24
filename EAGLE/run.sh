@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=1 python -m eagle.evaluation.gen_ea_answer_llama2chat --ea-model-path ~/xujiaming/datasets/LLM_models/EAGLE-llama2-chat-7B --base-model-path /share/datasets/public_models/Llama-2-7b-chat-hf --question-begin 0 --question-end 1 --top-k 4 --total-token 40 > out.txt

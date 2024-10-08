@@ -803,8 +803,11 @@ class Model(nn.Module):
 
         rid = 0
         position_ids_list = tree_position_ids.tolist()
-
+        
+        candidates_list = {i:[] for i in noleaf_index}
         for i in range(total_tokens + 1):
+            if i < total_tokens:
+                candidates_list[mask_index_list[i]].append(i+1)
             if i not in noleaf_index:
                 cid = i
                 depth = position_ids_list[i]
@@ -827,9 +830,10 @@ class Model(nn.Module):
 
         retrieve_indices = torch.tensor(retrieve_indices, dtype=torch.long)
         del mask_index, mask_index_list, noleaf_index, noleaf_num, leaf_num, max_depth, rid
+        
         tree_position_ids = tree_position_ids.to(hidden_states.device)
 
-        return draft_tokens, retrieve_indices, tree_mask, tree_position_ids
+        return draft_tokens, retrieve_indices, tree_mask, tree_position_ids, candidates_list
 
     @torch.no_grad()
     def acc(self, data, head, max_length=5):
