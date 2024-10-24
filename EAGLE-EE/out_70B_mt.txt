@@ -1,0 +1,2 @@
+[2024-10-14 15:02:46,054] [INFO] [real_accelerator.py:158:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+Output to mt_bench/ess-llama-2-chat-70b-fp16-temperature-0.0.jsonl
