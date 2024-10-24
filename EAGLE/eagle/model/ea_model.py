@@ -10,8 +10,7 @@ import os
 from transformers import PreTrainedModel, PretrainedConfig,AutoConfig
 
 
-# from .modeling_llama_kv import LlamaForCausalLM as KVLlamaForCausalLM
-from .modeling_llama_ee import LlamaForCausalLM as KVLlamaForCausalLM
+from .modeling_llama_kv import LlamaForCausalLM as KVLlamaForCausalLM
 from .modeling_mixtral_kv import MixtralForCausalLM as KVMixtralForCausalLM
 from .modeling_qwen2_kv import LlamaForCausalLM as KVQwen2ForCausalLM
 from .utils import *
@@ -168,36 +167,15 @@ class EaModel(nn.Module):
             past_key_values=None,
             output_orig=False,
             position_ids=None,
-            
-            # [xjm:] add Early Exiting
-            init = True,
-            draft_tokens_list = None,
-            lm_head = None,
-            exit_layer_id_list = None,
     ):
 
         with torch.inference_mode():
             # Pass input through the base model
-            draft_lm_head_weight = None
-            if not init:
-                # self.base_model.lm_head = self.base_model.lm_head.to(input_ids.device)
-                input_ids = input_ids.to(self.base_model.lm_head.weight.device)
-                # keys = {key for key in draft_tokens_list.keys() if len(draft_tokens_list[key]) == 4}
-                draft_tokens_list = {key:value for key,value in draft_tokens_list.items() if len(value) == 4}
-                # darft_tokens_index = torch.tensor([draft_tokens_list[key] for key in keys]).to(input_ids.device).view(-1)
-                draft_lm_head_weight = self.base_model.lm_head.weight[input_ids[0][sum(draft_tokens_list.values(), [])]] 
-                
             outputs = self.base_model.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 past_key_values=past_key_values,
                 position_ids=position_ids,
-                
-                # [xjm:] add early exiting
-                init = init,
-                draft_lm_head_weight = draft_lm_head_weight,
-                draft_tokens_list = draft_tokens_list,
-                exit_layer_id_list = exit_layer_id_list,
             )
             if output_orig:
                 orig = self.base_model.lm_head(outputs[0])
@@ -219,7 +197,7 @@ class EaModel(nn.Module):
             max_length=2048,
             log=False,
             is_llama3=False,
-            early_exiting = False,
+
     ):
         if is_llama3:
             stop_token_id = self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
@@ -257,7 +235,7 @@ class EaModel(nn.Module):
 
         input_len = input_ids.shape[1]
         reset_tree_mode(self)
-        draft_tokens, retrieve_indices,tree_mask,tree_position_ids, logits, hidden_state, sample_token,candidates_list = initialize_tree(
+        draft_tokens, retrieve_indices,tree_mask,tree_position_ids, logits, hidden_state, sample_token = initialize_tree(
             input_ids, self, past_key_values, logits_processor
         )
         new_token = 0
@@ -275,8 +253,6 @@ class EaModel(nn.Module):
                 tree_position_ids,
                 input_ids,
                 retrieve_indices,
-                early_exiting = early_exiting,
-                candidates_list = candidates_list if early_exiting else None,
             )
             #retrieve_indices=tree_buffers["retrieve_indices"]
             #logits = logits[0, retrieve_indices]
@@ -287,7 +263,7 @@ class EaModel(nn.Module):
             )
             # print(accept_length)
             #with Timer("update_inference_inputs"):
-            input_ids, draft_tokens, retrieve_indices,tree_mask,tree_position_ids, new_token, hidden_state, sample_token,candidates_list = update_inference_inputs(
+            input_ids, draft_tokens, retrieve_indices,tree_mask,tree_position_ids, new_token, hidden_state, sample_token = update_inference_inputs(
                 input_ids,
                 candidates,
                 best_candidate,

@@ -5,7 +5,6 @@
 <a href="https://arxiv.org/pdf/2406.16858"><b>Paper (EAGLE-2)</b></a> |
 <a href="https://sites.google.com/view/
 eagle-llm"><b>Blog</b></a> |
-<a href="https://huggingface.co/spaces/yuhuili/EAGLE-2"><b>Demo</b></a> |
 </p>
 
 
@@ -222,18 +221,15 @@ For technical details and full experimental results, please check [the paper of 
 ```
 @inproceedings{li2024eagle, 
 	author = {Yuhui Li and Fangyun Wei and Chao Zhang and Hongyang Zhang}, 
-	title = {EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty}, 
+	title = {{EAGLE}: Speculative Sampling Requires Rethinking Feature Uncertainty}, 
 	booktitle = {International Conference on Machine Learning},
 	year = {2024}
 }
-@misc{li2024eagle2fasterinferencelanguage,
-      title={EAGLE-2: Faster Inference of Language Models with Dynamic Draft Trees}, 
-      author={Yuhui Li and Fangyun Wei and Chao Zhang and Hongyang Zhang},
-      year={2024},
-      eprint={2406.16858},
-      archivePrefix={arXiv},
-      primaryClass={cs.CL},
-      url={https://arxiv.org/abs/2406.16858}, 
+@inproceedings{li2024eagle2, 
+	author = {Yuhui Li and Fangyun Wei and Chao Zhang and Hongyang Zhang}, 
+	title = {{EAGLE-2}: Faster Inference of Language Models with Dynamic Draft Trees}, 
+	booktitle = {Empirical Methods in Natural Language Processing},
+	year = {2024}
 }
 ```
 
